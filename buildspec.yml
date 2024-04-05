@@ -1,0 +1,32 @@
+version: 0.2
+
+phases:
+  pre_build:
+    commands:
+      - echo Logging in to Amazon ECR...
+      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $ECR_REPO_URI
+  build:
+    commands:
+      - echo Build started on `date`
+      - echo Building the Docker image...
+      - docker build -t $ECR_REPO_URI:latest .
+      - |
+        if [ -z "$IMAGE_TAG" ]; then
+          echo "IMAGE_TAG is not set, using 'latest' tag"
+          docker tag $ECR_REPO_URI:latest $ECR_REPO_URI:latest
+        else
+          docker tag $ECR_REPO_URI:latest $ECR_REPO_URI:$IMAGE_TAG
+        fi
+  post_build:
+    commands:
+      - echo Build completed on `date`
+      - echo Pushing the Docker image to ECR...
+      - docker push $ECR_REPO_URI:latest
+      - |
+        if [ -n "$IMAGE_TAG" ]; then
+          docker push $ECR_REPO_URI:$IMAGE_TAG
+        fi
+      - printf '[{"name":"MyContainer","imageUri":"%s"}]' $ECR_REPO_URI:$IMAGE_TAG > imagedefinitions.json
+artifacts:
+  files:
+    - imagedefinitions.json
