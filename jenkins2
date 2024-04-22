@@ -1,63 +1,52 @@
 pipeline {
-  agent any
-  stages {
-    stage('Checkout') {
-      steps {
-       git branch: 'main', credentialsId: 'your-aws-creds', url: 'https://github.com/devam-yorkie/cdk-copilot-deploy.git'
-      }
+    agent any
+    parameters {
+        string(name: 'DOCKER_IMAGE_NAME', defaultValue: 'your-app-image', description: 'Name of the Docker image to build')
+        string(name: 'ECR_REPOSITORY_URI', defaultValue: '323526869397.dkr.ecr.us-west-2.amazonaws.com/myrepo2', description: 'URI of the ECR repository to push Docker image to')
     }
-    stage('Build Docker Image') {
-      steps {
-        script {
-          // Build the Docker image with a specific name
-          sh 'docker build -t your-app-image .'
-        }
-      }
-    }
-    stage('Push Docker Image to ECR') {
-      steps {
-        script {
-          // Tag the Docker image with the ECR repository URL
-          sh 'docker tag your-app-image:latest 323526869397.dkr.ecr.us-west-2.amazonaws.com/myrepo2:latest'
-          // Authenticate Docker to Amazon ECR
-          sh 'aws ecr get-login-password --region us-west-2 | docker login --username AWS --password-stdin 323526869397.dkr.ecr.us-west-2.amazonaws.com'
-          // Push the Docker image to Amazon ECR
-          sh 'docker push 323526869397.dkr.ecr.us-west-2.amazonaws.com/myrepo2:latest'
-        }
-      }
-    }
-   stage('Deploy to ECS') {
-    steps {
-        script {
-            // Describe the existing service
-            def serviceDescription = sh(script: "aws ecs describe-services --cluster jenkinscluster --services jenkinsservice --query 'services[0]' --output json --region us-west-2", returnStdout: true).trim()
-            def serviceInfo = readJSON text: serviceDescription
-
-            // Get the current task definition and its CPU/memory values
-            def currentTaskDefinition = serviceInfo.taskDefinition
-            def currentCpu = serviceInfo.deployments[0].deploymentConfiguration.computeResources.reservedCPU
-            def currentMemory = serviceInfo.deployments[0].deploymentConfiguration.computeResources.reservedMemory
-
-            // Set the desired CPU/memory values for the new task definition
-            def desiredCpu = 2048  // Adjust this value as per your requirements
-            def desiredMemory = 4096  // Adjust this value as per your requirements
-
-            def newTaskDefinitionArn
-
-            if (currentCpu < desiredCpu || currentMemory < desiredMemory) {
-                // Create a new task definition with increased CPU and memory
-                sh "aws ecs register-task-definition --family jenkins-task --cpu '${desiredCpu}' --memory '${desiredMemory}' --network-mode awsvpc --requires-compatibilities FARGATE --execution-role-arn 'arn:aws:iam::323526869397:role/ecsTaskExecutionRole' --region us-west-2"
-
-                // Get the new task definition ARN
-                newTaskDefinitionArn = sh(script: "aws ecs describe-task-definition --task-definition jenkins-task --query 'taskDefinition.taskDefinitionArn' --output text --region us-west-2", returnStdout: true).trim()
-            } else {
-                newTaskDefinitionArn = currentTaskDefinition
+    stages {
+        stage('Checkout') {
+            steps {
+                git branch: 'main', credentialsId: 'your-aws-creds', url: 'https://github.com/devam-yorkie/cdk-copilot-deploy.git'
             }
-
-            // Update the ECS service with the task definition
-            sh "aws ecs update-service --cluster jenkinscluster --service jenkinsservice --task-definition '${newTaskDefinitionArn}' --force-new-deployment --region us-west-2"
         }
-      }
+        stage('Build Docker Image') {
+            steps {
+                script {
+                    // Build the Docker image with the provided name
+                    sh "docker build -t ${params.DOCKER_IMAGE_NAME} ."
+                }
+            }
+        }
+        stage('Push Docker Image to ECR') {
+            steps {
+                withCredentials([aws(accessKeyVariable: 'AWS_ACCESS_KEY_ID', credentialsId: 'useraleem-aws-creds', secretKeyVariable: 'AWS_SECRET_ACCESS_KEY')]) {
+                    script {
+                        // Tag and push Docker image to the provided ECR repository URI
+                        sh "docker tag ${params.DOCKER_IMAGE_NAME}:latest ${params.ECR_REPOSITORY_URI}:latest"
+                        sh "aws ecr get-login-password --region us-west-2 | docker login --username AWS --password-stdin ${params.ECR_REPOSITORY_URI}"
+                        sh "docker push ${params.ECR_REPOSITORY_URI}:latest"
+                    }
+                }
+            }
+        }
+        stage('Deploy to ECS') {
+            steps {
+                withCredentials([aws(accessKeyVariable: 'AWS_ACCESS_KEY_ID', credentialsId: 'useraleem-aws-creds', secretKeyVariable: 'AWS_SECRET_ACCESS_KEY')]) {
+                    // Update ECS service with the new Docker image
+                    sh 'aws ecs update-service --cluster jenkinscluster --service jenkinsservice --force-new-deployment --region us-west-2'
+                }
+            }
+        }
     }
-  }
+
+    post {
+        success {
+            echo 'Deployment successful Slack to Development team!'
+        }
+        failure {
+            echo 'Deployment failed Slack to Development team!'
+     }
+   }
 }
+    
