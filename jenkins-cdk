@@ -1,0 +1,32 @@
+pipeline {
+    agent any
+
+    environment {
+        AWS_REGION = 'us-west-2'
+        CDK_PATH = '/home/ubuntu/.nvm/versions/node/v20.12.2/bin'
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                git branch: 'main', credentialsId: 'your-aws-creds', url: 'https://github.com/MohammedAleemuddin/cdk-repo.git'
+            }
+        }
+
+        stage('Bootstrap') {
+            steps {
+                withAWS(credentials: 'useraleem-aws-creds', region: "${env.AWS_REGION}") {
+                    sh "${env.CDK_PATH}/cdk bootstrap"
+                }
+            }
+        }
+
+        stage('Deploy') {
+            steps {
+                withAWS(credentials: 'useraleem-aws-creds', region: "${env.AWS_REGION}") {
+                    sh "${env.CDK_PATH}/npx cdk deploy --app \"node app.js\" --require-approval never"
+                }
+            }
+        }
+    }
+}
